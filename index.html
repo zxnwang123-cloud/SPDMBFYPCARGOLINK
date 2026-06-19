@@ -3499,23 +3499,44 @@ if(loginFormEl)loginFormEl.onsubmit=async e=>{
   e.preventDefault();
   const username=$('#user').value.trim();
   const password=$('#pass').value;
-  if(supabaseEnabled()){
-    const {error}=await loginWithSupabaseUsername(username,password);
-    if(error){
-      $('#err').style.display='block';
-      return;
-    }
+  const localAccount=mode==='staff'
+    ? all().find(user=>user.u===username&&user.p===password&&user.role!=='Client')
+    : users.find(user=>user.u===username&&user.p===password&&user.role==='Client');
+
+  if(mode==='staff'&&username===admin.u&&password===admin.p){
     $('#err').style.display='none';
+    me=admin;
+    persistSession(admin);
     openDashboard('dash');
     return;
   }
-  const account=mode==='staff'
-    ? all().find(user=>user.u===username&&user.p===password&&user.role!=='Client')
-    : users.find(user=>user.u===username&&user.p===password&&user.role==='Client');
-  if(!account){$('#err').style.display='block';return;}
+
+  if(supabaseEnabled()){
+    const {error}=await loginWithSupabaseUsername(username,password);
+    if(!error){
+      $('#err').style.display='none';
+      openDashboard('dash');
+      return;
+    }
+    if(localAccount){
+      $('#err').style.display='none';
+      me=localAccount;
+      persistSession(localAccount);
+      openDashboard('dash');
+      return;
+    }
+    $('#err').style.display='block';
+    console.error('Login failed',error);
+    return;
+  }
+
+  if(!localAccount){
+    $('#err').style.display='block';
+    return;
+  }
   $('#err').style.display='none';
-  me=account;
-  persistSession(account);
+  me=localAccount;
+  persistSession(localAccount);
   openDashboard('dash');
 };
 
