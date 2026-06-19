@@ -113,7 +113,7 @@ input,select,textarea{width:100%;height:54px;border-radius:18px;padding:0 16px 0
 const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
 const SUPABASE_URL='https://nztrkxjjxbtyvglimmxe.supabase.co';
 const SUPABASE_KEY='sb_publishable_9p9vGINjacgLhAL5xfRiGA_hoEgrD7a';
-const supabase=window.supabase?.createClient?window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
+const supabaseClient=window.supabase?.createClient?window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
 const LANG_STORAGE_KEY='clLang';
 const LOGISTICS_FOLDER_NAME='Logistics';
 let L='en',mode='staff',page='dash',editIndex=null,orgOffice='🇸🇬 Singapore',calDate=new Date(),me=null,calEditIndex=null,resetPwIndex=null,salesEditId=null,currentTaskRoomId=null,currentWorkspaceFolderId='root',dragWorkspaceItemId=null,expandedWorkspaceFolders={},currentTaskSearch='',currentCalendarInvolvedUsers=[],calInvolvedSearch='';
