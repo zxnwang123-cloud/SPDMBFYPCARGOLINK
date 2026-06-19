@@ -175,8 +175,16 @@ let remoteStateLastUpdatedAt='';
 let remoteStateLastSnapshot='';
 let remoteStateSavePromise=Promise.resolve();
 let remoteStateSaveInFlight=false;
+let liveSyncPausedUntil=0;
+let remoteStateRealtimeChannel=null;
 function hasPendingRemoteSave(){
   return !!remoteStateSaveTimer || remoteStateSaveInFlight;
+}
+function pauseLiveSync(ms=3500){
+  liveSyncPausedUntil=Math.max(liveSyncPausedUntil,Date.now()+ms);
+}
+function liveSyncPaused(){
+  return Date.now()<liveSyncPausedUntil;
 }
 
 function nextMidnightTimestamp(){
@@ -365,6 +373,7 @@ async function ensureRemoteStateRow(){
 async function loadRemoteStateFromSupabase(force=false){
   if(!supabaseEnabled())return false;
   if(remoteStateLoading)return false;
+  if(!force&&liveSyncPaused())return false;
   if(hasPendingRemoteSave())return false;
   remoteStateLoading=true;
   const ready=await ensureRemoteStateRow();
@@ -504,13 +513,29 @@ function shouldSkipLiveSyncOnce(){
   suppressNextLiveSync=false;
   return true;
 }
+function connectRemoteStateRealtime(){
+  if(!supabaseEnabled()||remoteStateRealtimeChannel)return;
+  remoteStateRealtimeChannel=supabaseClient
+    .channel(`cargo-link-runtime-${REMOTE_STATE_ID}`)
+    .on('postgres_changes',{
+      event:'UPDATE',
+      schema:'public',
+      table:REMOTE_STATE_TABLE,
+      filter:`id=eq.${REMOTE_STATE_ID}`
+    },()=>{
+      if(liveSyncPaused())return;
+      refreshRemoteLiveState(true);
+    })
+    .subscribe();
+}
 function initLiveSync(){
   liveSyncSnapshot=currentLiveSnapshot();
   if(supabaseEnabled()){
     if(remoteStatePollId)clearInterval(remoteStatePollId);
+    connectRemoteStateRealtime();
     remoteStatePollId=window.setInterval(()=>{
       if($('#systemPage')&&!$('#systemPage').classList.contains('hide'))refreshRemoteLiveState(false);
-    },1800);
+    },1200);
     return;
   }
   if('BroadcastChannel' in window){
@@ -1263,7 +1288,12 @@ function markGroupChatRead(groupId){
   if(!me?.u)return;
   const thread=getGroupChatThread(groupId);
   const readMap=getUserGroupReadMap();
-  readMap[groupId]=thread.length;
+  const nextCount=thread.length;
+  if((readMap[groupId]||0)===nextCount){
+    updateNotificationBadge();
+    return;
+  }
+  readMap[groupId]=nextCount;
   groupChatReadState[me.u]=readMap;
   save();
   updateNotificationBadge();
@@ -1350,7 +1380,12 @@ function markDirectThreadRead(otherUser){
   const threadId=directChatThreadId(me.u,otherUser);
   const messages=directChats[threadId]||[];
   const readMap=getUserDirectReadMap();
-  readMap[threadId]=messages.length;
+  const nextCount=messages.length;
+  if((readMap[threadId]||0)===nextCount){
+    updateNotificationBadge();
+    return;
+  }
+  readMap[threadId]=nextCount;
   directChatReadState[me.u]=readMap;
   save();
   updateNotificationBadge();
@@ -1585,9 +1620,10 @@ function renderGlobalChat(){
       const input=$('#globalChatInput');
       const text=input?.value.trim()||'';
       if(!text || !selectedEntry) return;
-      const message={id:`DM-${Date.now()}`,sender:me.u,text,time:nowStamp()};
+      const message={id:`DM-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,sender:me.u,text,time:nowStamp()};
       if(selectedEntry.type==='group') getGroupChatThread(selectedEntry.group.id).push(message);
       else thread.push(message);
+      pauseLiveSync();
       save();
       renderGlobalChat();
     };
@@ -3180,7 +3216,8 @@ function bindTaskWorkspaceForms(){
       const input=$('#taskMessageInput');
       const text=input?.value.trim()||'';
       if(!text)return;
-      workspace.messages.push({id:`MSG-${Date.now()}`,sender:me.u,text,time:nowStamp()});
+      workspace.messages.push({id:`MSG-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,sender:me.u,text,time:nowStamp()});
+      pauseLiveSync();
       save();
       renderAdmin('taskRoom');
     };
