@@ -1092,7 +1092,7 @@ function closeAddParticipantModal(){$('#addParticipantModal').classList.remove('
 function openDirectChatFromParticipant(username){
   activeDirectChatUser=username;
   closeParticipantsModal();
-  openGlobalChat();
+  openGlobalChat(false);
 }
 function escapeHtml(value=''){return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function taskFolderChildren(workspace,parentId='root'){return workspace.files.filter(item=>(item.parentId||'root')===parentId&&item.itemType==='folder').sort((a,b)=>a.name.localeCompare(b.name))}
@@ -1593,8 +1593,8 @@ function setDirectChatSearch(value){
     input.setSelectionRange(value.length,value.length);
   }
 }
-function openGlobalChat(){
-  activeDirectChatUser=null;
+function openGlobalChat(resetSelection=true){
+  if(resetSelection)activeDirectChatUser=null;
   renderGlobalChat();
   $('#globalChatModal').classList.add('show');
 }
@@ -2700,7 +2700,7 @@ function projectTaskListHTML(showCompleted=false){
   const sub=isFullAccessUser()?tr('projectTaskBoard'):(isSalesUser()?tr('projectTaskBoard'):tr('managerSub'));
   return `<div class="card"><div class="panelTitle"><h3>${heading}</h3><p>${sub}</p></div>${tasks.length?tasks.map(task=>{const confirmBtn=!showCompleted&&canConfirmProject(task)?`<button class="btn mini" onclick="event.stopPropagation();confirmProjectTask('${task.id}')">${tr('confirmProject')}</button>`:'';const editBtn=!showCompleted&&canEditSalesTask(task)?`<button class="btn mini" onclick="event.stopPropagation();startEditSalesTask('${task.id}')">${tr('edit')}</button>`:'';const deleteBtn=((!showCompleted&&canDeleteSalesTask(task))||(showCompleted&&canDeleteCompletedSalesTask(task)))?`<button class="btn mini alt" onclick="event.stopPropagation();deleteSalesProjectTask('${task.id}')">${tr('deleteTask')}</button>`:'';return `<div class="row taskBoardCard clickableTask ${task.projectConfirmed&&isSalesUser()?'handoverTask':''}" style="display:block" onclick="openTaskWorkspace('${task.id}')"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap"><div><b>${task.projectId} · ${task.title}</b></div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="taskStatus ${showCompleted?'done':(task.projectConfirmed?'done':'active')}">${salesTaskStatusLabel(task,showCompleted)}</span><button class="btn mini" onclick="event.stopPropagation();openTaskWorkspace('${task.id}')">${tr('openTask')}</button>${confirmBtn}${editBtn}${deleteBtn}</div></div>${taskCargoTrackerHTML(task)}${taskProgressHTML(task)}<div class="taskBody" style="margin-top:14px;width:100%">${taskBodyHTML(task)}</div></div>`}).join(''):`<p class="muted">${tr('noData')}</p>`}</div>`
 }
-function openDirectChatWithUser(username){activeDirectChatUser=username;openGlobalChat()}
+function openDirectChatWithUser(username){activeDirectChatUser=username;openGlobalChat(false)}
 function clientDashboardHTML(){
   const tasks=clientVisibleTasks();
   const ongoing=tasks.filter(t=>t.status==='Ongoing').length;
@@ -3476,7 +3476,7 @@ if(tasksMenuBtn)tasksMenuBtn.onclick=e=>{e.stopPropagation();tasksDropdown?.clas
 if(manageAssignBtn)manageAssignBtn.onclick=()=>renderAdmin('manageAssign');
 if(accBtn)accBtn.onclick=()=>renderAdmin('acc');
 if(reqBtn)reqBtn.onclick=()=>renderAdmin('req');
-if(chatBtn)chatBtn.onclick=openGlobalChat;
+if(chatBtn)chatBtn.onclick=()=>openGlobalChat(true);
 if(notifBtn)notifBtn.onclick=openNotifications;
 if(bindClientBtn)bindClientBtn.onclick=()=>renderAdmin('bindClient');
 if(calendarBtn)calendarBtn.onclick=openCalendarPopup;
