@@ -128,24 +128,26 @@ const admin={u:'Admin',p:'Admin123',office:'Global',dept:'Admin',role:'Admin',po
 const offices=['🇸🇬 Singapore','🇨🇳 China'];
 const depts=['HR','General Manager','Logistics','Manufacturing','Sales','Procurement'];
 const officeBase=o=>String(o||'').includes('China')?'China':String(o||'').includes('Singapore')?'Singapore':String(o||'');
-let users=JSON.parse(localStorage.clUsers||'[]');
-let reqs=JSON.parse(localStorage.clReqs||'[]');
-let jobs=JSON.parse(localStorage.cargoJobs||localStorage.clJobs||'[]');
-let calItems=JSON.parse(localStorage.clCalendarItems||'[]');
-let manufacturingTasks=JSON.parse(localStorage.clManufacturingTasks||'[]');
-let logisticsTasks=JSON.parse(localStorage.clLogisticsTasks||'[]');
-let salesProjectTasks=JSON.parse(localStorage.clSalesProjectTasks||'[]');
-let logisticsMilestoneNotifications=JSON.parse(localStorage.clLogisticsMilestoneNotifications||'[]');
-let clearedLogisticsMilestoneNotifications=JSON.parse(localStorage.clClearedLogisticsMilestoneNotifications||'[]');
-let taskWorkspaces=JSON.parse(localStorage.clTaskWorkspaces||'{}');
-let directChats=JSON.parse(localStorage.clDirectChats||'{}');
-let directChatReadState=JSON.parse(localStorage.clDirectChatReadState||'{}');
-let groupChats=JSON.parse(localStorage.clGroupChats||'{}');
-let groupChatReadState=JSON.parse(localStorage.clGroupChatReadState||'{}');
-let clearedDueSoonNotifications=JSON.parse(localStorage.clClearedDueSoonNotifications||'[]');
-let clearedConfirmedManufacturingNotifications=JSON.parse(localStorage.clClearedConfirmedManufacturingNotifications||'[]');
-let clearedAssignedManufacturingNotifications=JSON.parse(localStorage.clClearedAssignedManufacturingNotifications||'[]');
-let clearedPickupReadyNotifications=JSON.parse(localStorage.clClearedPickupReadyNotifications||'[]');
+const REMOTE_STATE_TABLE='app_runtime_state';
+const REMOTE_STATE_ID='cargo-link-main';
+let users=[];
+let reqs=[];
+let jobs=[];
+let calItems=[];
+let manufacturingTasks=[];
+let logisticsTasks=[];
+let salesProjectTasks=[];
+let logisticsMilestoneNotifications=[];
+let clearedLogisticsMilestoneNotifications=[];
+let taskWorkspaces={};
+let directChats={};
+let directChatReadState={};
+let groupChats={};
+let groupChatReadState={};
+let clearedDueSoonNotifications=[];
+let clearedConfirmedManufacturingNotifications=[];
+let clearedAssignedManufacturingNotifications=[];
+let clearedPickupReadyNotifications=[];
 let activeDirectChatUser=null;
 let directChatSearch='';
 let currentBindClientTaskId=null;
@@ -158,11 +160,6 @@ let taskRoomDrafts={};
 let suppressNextLiveSync=false;
 let sessionState=JSON.parse(sessionStorage.getItem('clSession')||'null');
 let sessionViewState=JSON.parse(sessionStorage.getItem('clSessionView')||'null');
-function nextMidnightTimestamp(){
-  const next=new Date();
-  next.setHours(24,0,0,0);
-  return next.getTime();
-}
 let sessionTimeoutId=null;
 let sessionCheckIntervalId=null;
 const liveSyncId=`LIVE-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
@@ -170,7 +167,19 @@ let liveSyncChannel=null;
 let liveSyncIntervalId=null;
 let liveSyncSnapshot='';
 const SUPABASE_USERNAME_LOGIN_RPC='get_login_email_by_username';
+let remoteStatePollId=null;
+let remoteStateSaveTimer=null;
+let remoteStateLoading=false;
+let remoteStateReady=false;
+let remoteStateLastUpdatedAt='';
+let remoteStateLastSnapshot='';
+let remoteStateSavePromise=Promise.resolve();
 
+function nextMidnightTimestamp(){
+  const next=new Date();
+  next.setHours(24,0,0,0);
+  return next.getTime();
+}
 function supabaseEnabled(){
   return !!supabaseClient;
 }
@@ -199,12 +208,7 @@ async function fetchProfilesFromSupabase(){
     console.error('Supabase profiles fetch failed',error);
     return [];
   }
-  users=(data||[])
-    .filter(profile=>profile?.username)
-    .map(normalizeSupabaseProfile)
-    .filter(profile=>profile.u!=='Admin');
-  localStorage.clUsers=JSON.stringify(users);
-  return users;
+  return (data||[]).filter(profile=>profile?.username).map(normalizeSupabaseProfile);
 }
 async function lookupLoginEmailByUsername(username){
   if(!supabaseEnabled())return '';
@@ -215,8 +219,7 @@ async function lookupLoginEmailByUsername(username){
   }
   if(typeof data==='string')return data;
   if(Array.isArray(data)&&data[0]){
-    if(typeof data[0]==='string')return data[0];
-    return data[0].email||data[0].login_email||'';
+    return typeof data[0]==='string' ? data[0] : (data[0].email||data[0].login_email||'');
   }
   return data?.email||data?.login_email||'';
 }
@@ -244,7 +247,6 @@ async function loginWithSupabaseUsername(username,password){
   if(!email)return {error:new Error('Invalid username or password')};
   const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
   if(error)return {error};
-  await fetchProfilesFromSupabase();
   await hydrateAuthenticatedUserFromSupabase();
   return {data,error:null};
 }
@@ -252,107 +254,233 @@ async function restoreSupabaseSession(){
   if(!supabaseEnabled())return false;
   const {data,error}=await supabaseClient.auth.getSession();
   if(error||!data?.session)return false;
-  await fetchProfilesFromSupabase();
   const user=await hydrateAuthenticatedUserFromSupabase();
   return !!user;
 }
 async function signOutSupabaseSafe(){
   if(!supabaseEnabled())return;
-  try{await supabaseClient.auth.signOut();}catch(error){console.error('Supabase sign out failed',error);}
+  try{
+    await supabaseClient.auth.signOut();
+  }catch(error){
+    console.error('Supabase sign out failed',error);
+  }
 }
-
+function blankRemoteState(){
+  return {
+    users:[],
+    reqs:[],
+    jobs:[],
+    calItems:[],
+    manufacturingTasks:[],
+    logisticsTasks:[],
+    salesProjectTasks:[],
+    logisticsMilestoneNotifications:[],
+    clearedLogisticsMilestoneNotifications:[],
+    taskWorkspaces:{},
+    directChats:{},
+    directChatReadState:{},
+    groupChats:{},
+    groupChatReadState:{},
+    clearedDueSoonNotifications:[],
+    clearedConfirmedManufacturingNotifications:[],
+    clearedAssignedManufacturingNotifications:[],
+    clearedPickupReadyNotifications:[]
+  };
+}
+function normalizeRemoteArray(value){
+  return Array.isArray(value)?value:[];
+}
+function normalizeRemoteObject(value){
+  return value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+}
+function serializeAppState(){
+  return {
+    users:normalizeRemoteArray(users),
+    reqs:normalizeRemoteArray(reqs),
+    jobs:normalizeRemoteArray(jobs),
+    calItems:normalizeRemoteArray(calItems),
+    manufacturingTasks:normalizeRemoteArray(manufacturingTasks),
+    logisticsTasks:normalizeRemoteArray(logisticsTasks),
+    salesProjectTasks:normalizeRemoteArray(salesProjectTasks),
+    logisticsMilestoneNotifications:normalizeRemoteArray(logisticsMilestoneNotifications),
+    clearedLogisticsMilestoneNotifications:normalizeRemoteArray(clearedLogisticsMilestoneNotifications),
+    taskWorkspaces:normalizeRemoteObject(taskWorkspaces),
+    directChats:normalizeRemoteObject(directChats),
+    directChatReadState:normalizeRemoteObject(directChatReadState),
+    groupChats:normalizeRemoteObject(groupChats),
+    groupChatReadState:normalizeRemoteObject(groupChatReadState),
+    clearedDueSoonNotifications:normalizeRemoteArray(clearedDueSoonNotifications),
+    clearedConfirmedManufacturingNotifications:normalizeRemoteArray(clearedConfirmedManufacturingNotifications),
+    clearedAssignedManufacturingNotifications:normalizeRemoteArray(clearedAssignedManufacturingNotifications),
+    clearedPickupReadyNotifications:normalizeRemoteArray(clearedPickupReadyNotifications)
+  };
+}
+function applyRemoteState(state={}){
+  const safe={...blankRemoteState(),...(state||{})};
+  users=normalizeRemoteArray(safe.users);
+  reqs=normalizeRemoteArray(safe.reqs);
+  jobs=normalizeRemoteArray(safe.jobs);
+  calItems=normalizeRemoteArray(safe.calItems);
+  manufacturingTasks=normalizeRemoteArray(safe.manufacturingTasks);
+  logisticsTasks=normalizeRemoteArray(safe.logisticsTasks);
+  salesProjectTasks=normalizeRemoteArray(safe.salesProjectTasks);
+  logisticsMilestoneNotifications=normalizeRemoteArray(safe.logisticsMilestoneNotifications);
+  clearedLogisticsMilestoneNotifications=normalizeRemoteArray(safe.clearedLogisticsMilestoneNotifications);
+  taskWorkspaces=normalizeRemoteObject(safe.taskWorkspaces);
+  directChats=normalizeRemoteObject(safe.directChats);
+  directChatReadState=normalizeRemoteObject(safe.directChatReadState);
+  groupChats=normalizeRemoteObject(safe.groupChats);
+  groupChatReadState=normalizeRemoteObject(safe.groupChatReadState);
+  clearedDueSoonNotifications=normalizeRemoteArray(safe.clearedDueSoonNotifications);
+  clearedConfirmedManufacturingNotifications=normalizeRemoteArray(safe.clearedConfirmedManufacturingNotifications);
+  clearedAssignedManufacturingNotifications=normalizeRemoteArray(safe.clearedAssignedManufacturingNotifications);
+  clearedPickupReadyNotifications=normalizeRemoteArray(safe.clearedPickupReadyNotifications);
+}
+async function ensureRemoteStateRow(){
+  if(!supabaseEnabled())return false;
+  const {data,error,status}=await supabaseClient
+    .from(REMOTE_STATE_TABLE)
+    .select('id')
+    .eq('id',REMOTE_STATE_ID)
+    .maybeSingle();
+  if(error&&status!==406){
+    console.error('Supabase remote state lookup failed',error);
+    return false;
+  }
+  if(data)return true;
+  const {error:insertError}=await supabaseClient
+    .from(REMOTE_STATE_TABLE)
+    .upsert({id:REMOTE_STATE_ID,payload:blankRemoteState()},{onConflict:'id'});
+  if(insertError){
+    console.error('Supabase remote state bootstrap failed',insertError);
+    return false;
+  }
+  return true;
+}
+async function loadRemoteStateFromSupabase(force=false){
+  if(!supabaseEnabled())return false;
+  if(remoteStateLoading&&!force)return false;
+  remoteStateLoading=true;
+  const ready=await ensureRemoteStateRow();
+  if(!ready){
+    remoteStateLoading=false;
+    return false;
+  }
+  const {data,error}=await supabaseClient
+    .from(REMOTE_STATE_TABLE)
+    .select('payload,updated_at')
+    .eq('id',REMOTE_STATE_ID)
+    .single();
+  remoteStateLoading=false;
+  if(error){
+    console.error('Supabase remote state load failed',error);
+    return false;
+  }
+  const payload=data?.payload||blankRemoteState();
+  const nextUpdatedAt=data?.updated_at||'';
+  const nextSnapshot=JSON.stringify(payload);
+  const changed=force||nextUpdatedAt!==remoteStateLastUpdatedAt||nextSnapshot!==remoteStateLastSnapshot;
+  if(!changed)return false;
+  remoteStateLastUpdatedAt=nextUpdatedAt;
+  remoteStateLastSnapshot=nextSnapshot;
+  applyRemoteState(payload);
+  remoteStateReady=true;
+  return true;
+}
+function queueRemoteStateSave(){
+  if(!supabaseEnabled()||!remoteStateReady)return;
+  if(remoteStateSaveTimer)clearTimeout(remoteStateSaveTimer);
+  remoteStateSaveTimer=window.setTimeout(()=>{
+    const payload=serializeAppState();
+    const snapshot=JSON.stringify(payload);
+    remoteStateSavePromise=remoteStateSavePromise.then(async()=>{
+      const {data,error}=await supabaseClient
+        .from(REMOTE_STATE_TABLE)
+        .upsert({id:REMOTE_STATE_ID,payload},{onConflict:'id'})
+        .select('updated_at')
+        .single();
+      if(error){
+        console.error('Supabase remote state save failed',error);
+        return;
+      }
+      remoteStateLastUpdatedAt=data?.updated_at||remoteStateLastUpdatedAt;
+      remoteStateLastSnapshot=snapshot;
+    });
+  },120);
+}
+function readLegacyLocalState(){
+  const parse=(key,fallback)=>{
+    try{
+      return JSON.parse(localStorage.getItem(key)||fallback);
+    }catch(error){
+      return JSON.parse(fallback);
+    }
+  };
+  return {
+    users:parse('clUsers','[]'),
+    reqs:parse('clReqs','[]'),
+    jobs:parse('cargoJobs',localStorage.getItem('clJobs')||'[]'),
+    calItems:parse('clCalendarItems','[]'),
+    manufacturingTasks:parse('clManufacturingTasks','[]'),
+    logisticsTasks:parse('clLogisticsTasks','[]'),
+    salesProjectTasks:parse('clSalesProjectTasks','[]'),
+    logisticsMilestoneNotifications:parse('clLogisticsMilestoneNotifications','[]'),
+    clearedLogisticsMilestoneNotifications:parse('clClearedLogisticsMilestoneNotifications','[]'),
+    taskWorkspaces:parse('clTaskWorkspaces','{}'),
+    directChats:parse('clDirectChats','{}'),
+    directChatReadState:parse('clDirectChatReadState','{}'),
+    groupChats:parse('clGroupChats','{}'),
+    groupChatReadState:parse('clGroupChatReadState','{}'),
+    clearedDueSoonNotifications:parse('clClearedDueSoonNotifications','[]'),
+    clearedConfirmedManufacturingNotifications:parse('clClearedConfirmedManufacturingNotifications','[]'),
+    clearedAssignedManufacturingNotifications:parse('clClearedAssignedManufacturingNotifications','[]'),
+    clearedPickupReadyNotifications:parse('clClearedPickupReadyNotifications','[]')
+  };
+}
+function hasMeaningfulState(state={}){
+  return Object.values(state).some(value=>{
+    if(Array.isArray(value))return value.length>0;
+    if(value&&typeof value==='object')return Object.keys(value).length>0;
+    return false;
+  });
+}
 function save(){
-  localStorage.clUsers=JSON.stringify(users);
-  localStorage.clReqs=JSON.stringify(reqs);
-  localStorage.clCalendarItems=JSON.stringify(calItems);
-  localStorage.clManufacturingTasks=JSON.stringify(manufacturingTasks);
-  localStorage.clLogisticsTasks=JSON.stringify(logisticsTasks);
-  localStorage.clSalesProjectTasks=JSON.stringify(salesProjectTasks);
-  localStorage.clLogisticsMilestoneNotifications=JSON.stringify(logisticsMilestoneNotifications);
-  localStorage.clClearedLogisticsMilestoneNotifications=JSON.stringify(clearedLogisticsMilestoneNotifications);
-  localStorage.clTaskWorkspaces=JSON.stringify(taskWorkspaces);
-  localStorage.clDirectChats=JSON.stringify(directChats);
-  localStorage.clDirectChatReadState=JSON.stringify(directChatReadState);
-  localStorage.clGroupChats=JSON.stringify(groupChats);
-  localStorage.clGroupChatReadState=JSON.stringify(groupChatReadState);
-  localStorage.clClearedDueSoonNotifications=JSON.stringify(clearedDueSoonNotifications);
-  localStorage.clClearedConfirmedManufacturingNotifications=JSON.stringify(clearedConfirmedManufacturingNotifications);
-  localStorage.clClearedAssignedManufacturingNotifications=JSON.stringify(clearedAssignedManufacturingNotifications);
-  localStorage.clClearedPickupReadyNotifications=JSON.stringify(clearedPickupReadyNotifications);
   updateNotificationBadge();
+  if(supabaseEnabled()){
+    queueRemoteStateSave();
+    return;
+  }
   notifyLiveUpdate();
 }
 function loadLiveState(){
-  users=JSON.parse(localStorage.clUsers||'[]');
-  reqs=JSON.parse(localStorage.clReqs||'[]');
-  jobs=JSON.parse(localStorage.cargoJobs||localStorage.clJobs||'[]');
-  calItems=JSON.parse(localStorage.clCalendarItems||'[]');
-  manufacturingTasks=JSON.parse(localStorage.clManufacturingTasks||'[]');
-  logisticsTasks=JSON.parse(localStorage.clLogisticsTasks||'[]');
-  salesProjectTasks=JSON.parse(localStorage.clSalesProjectTasks||'[]');
-  logisticsMilestoneNotifications=JSON.parse(localStorage.clLogisticsMilestoneNotifications||'[]');
-  clearedLogisticsMilestoneNotifications=JSON.parse(localStorage.clClearedLogisticsMilestoneNotifications||'[]');
-  taskWorkspaces=JSON.parse(localStorage.clTaskWorkspaces||'{}');
-  directChats=JSON.parse(localStorage.clDirectChats||'{}');
-  directChatReadState=JSON.parse(localStorage.clDirectChatReadState||'{}');
-  groupChats=JSON.parse(localStorage.clGroupChats||'{}');
-  groupChatReadState=JSON.parse(localStorage.clGroupChatReadState||'{}');
-  clearedDueSoonNotifications=JSON.parse(localStorage.clClearedDueSoonNotifications||'[]');
-  clearedConfirmedManufacturingNotifications=JSON.parse(localStorage.clClearedConfirmedManufacturingNotifications||'[]');
-  clearedAssignedManufacturingNotifications=JSON.parse(localStorage.clClearedAssignedManufacturingNotifications||'[]');
-  clearedPickupReadyNotifications=JSON.parse(localStorage.clClearedPickupReadyNotifications||'[]');
+  return serializeAppState();
 }
 function currentLiveSnapshot(){
-  return JSON.stringify({
-    users:localStorage.clUsers||'[]',
-    reqs:localStorage.clReqs||'[]',
-    jobs:localStorage.cargoJobs||localStorage.clJobs||'[]',
-    cal:localStorage.clCalendarItems||'[]',
-    manufacturing:localStorage.clManufacturingTasks||'[]',
-    logistics:localStorage.clLogisticsTasks||'[]',
-    sales:localStorage.clSalesProjectTasks||'[]',
-    logisticsMilestones:localStorage.clLogisticsMilestoneNotifications||'[]',
-    clearedLogisticsMilestones:localStorage.clClearedLogisticsMilestoneNotifications||'[]',
-    workspaces:localStorage.clTaskWorkspaces||'{}',
-    direct:localStorage.clDirectChats||'{}',
-    directRead:localStorage.clDirectChatReadState||'{}',
-    groups:localStorage.clGroupChats||'{}',
-    groupRead:localStorage.clGroupChatReadState||'{}',
-    clearedDueSoon:localStorage.clClearedDueSoonNotifications||'[]',
-    clearedConfirmedManufacturing:localStorage.clClearedConfirmedManufacturingNotifications||'[]',
-    clearedAssignedManufacturing:localStorage.clClearedAssignedManufacturingNotifications||'[]',
-    clearedPickupReady:localStorage.clClearedPickupReadyNotifications||'[]'
-  });
+  return JSON.stringify(serializeAppState());
 }
-function refreshLiveUI(){
-  updateNotificationBadge();
-  if(!$('#systemPage')||$('#systemPage').classList.contains('hide')||!me)return;
-  const refreshedUser=all().find(x=>x.u===me.u);
-  if(!refreshedUser){
-    logoutToLogin();
-    return;
-  }
-  me=refreshedUser;
-  refreshRoleLabel();
-  configureNav();
-  renderAdmin(page);
-  if($('#calendarModal')?.classList.contains('show'))$('#calendarModalBody').innerHTML=calendarHTML();
-  if($('#globalChatModal')?.classList.contains('show'))renderGlobalChat();
-  if($('#participantsModal')?.classList.contains('show')&&currentTaskRoom())openParticipantsModal();
-  if($('#editParticipantsModal')?.classList.contains('show')&&currentTaskRoom())openEditParticipantsModal();
-  if($('#bindClientModal')?.classList.contains('show')&&currentBindClientTaskId)openBindClientModal(currentBindClientTaskId);
-  const activeGroupKey=String(activeDirectChatUser||'');
-  if($('#groupMembersModal')?.classList.contains('show')&&activeGroupKey.startsWith('grp:'))openGroupMembersModal(activeGroupKey.slice(4));
+async function refreshRemoteLiveState(force=false){
+  if(!supabaseEnabled())return;
+  const changed=await loadRemoteStateFromSupabase(force);
+  if(changed)refreshLiveUI();
 }
 function handleLiveSync(force=false){
+  if(supabaseEnabled()){
+    refreshRemoteLiveState(force);
+    return;
+  }
   const nextSnapshot=currentLiveSnapshot();
-  if(!force && nextSnapshot===liveSyncSnapshot)return;
+  if(!force&&nextSnapshot===liveSyncSnapshot)return;
   liveSyncSnapshot=nextSnapshot;
-  loadLiveState();
   refreshLiveUI();
 }
 function notifyLiveUpdate(){
-  try{liveSyncChannel?.postMessage({type:'live-update',sourceId:liveSyncId,at:Date.now()});}catch(err){}
+  if(supabaseEnabled()){
+    queueRemoteStateSave();
+    return;
+  }
+  try{
+    liveSyncChannel?.postMessage({type:'live-update',sourceId:liveSyncId,at:Date.now()});
+  }catch(err){}
   handleLiveSync(true);
 }
 function armFilePickerSyncPause(){
@@ -365,6 +493,13 @@ function shouldSkipLiveSyncOnce(){
 }
 function initLiveSync(){
   liveSyncSnapshot=currentLiveSnapshot();
+  if(supabaseEnabled()){
+    if(remoteStatePollId)clearInterval(remoteStatePollId);
+    remoteStatePollId=window.setInterval(()=>{
+      if($('#systemPage')&&!$('#systemPage').classList.contains('hide'))refreshRemoteLiveState(false);
+    },1800);
+    return;
+  }
   if('BroadcastChannel' in window){
     liveSyncChannel=new BroadcastChannel('cargo-link-live-sync');
     liveSyncChannel.onmessage=event=>{
@@ -375,11 +510,19 @@ function initLiveSync(){
   }
   if(liveSyncIntervalId)clearInterval(liveSyncIntervalId);
   liveSyncIntervalId=window.setInterval(()=>{
-    if($('#systemPage')&&!$('#systemPage').classList.contains('hide'))handleLiveSync();
+    if($('#systemPage')&&!$('#systemPage').classList.contains('hide'))handleLiveSync(false);
   },500);
 }
-window.addEventListener('focus',()=>{if(shouldSkipLiveSyncOnce())return;handleLiveSync(true)});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){if(shouldSkipLiveSyncOnce())return;handleLiveSync(true)}});
+window.addEventListener('focus',()=>{
+  if(shouldSkipLiveSyncOnce())return;
+  handleLiveSync(true);
+});
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'){
+    if(shouldSkipLiveSyncOnce())return;
+    handleLiveSync(true);
+  }
+});
 function scheduleSessionTimeout(){
   if(sessionTimeoutId){
     clearTimeout(sessionTimeoutId);
@@ -600,7 +743,7 @@ function isLogisticsManager(){return isLogisticsUser()&&(me?.position||'Worker')
 function sameOffice(u){return officeBase(u.office)===officeBase(me?.office)}
 function scopedUsers(){return isHRUser()?users.filter(sameOffice):users}
 function calendarOwner(){return me?.u||'Admin'}
-function systemJobs(){return JSON.parse(localStorage.cargoJobs||localStorage.clJobs||'[]')}
+function systemJobs(){return Array.isArray(jobs)?jobs:[]}
 function canSeeJob(j){let owner=calendarOwner();return j.owner===owner||j.by===owner||j.assignedTo===owner||j.clientAccount===owner||(!j.owner&&!j.by&&!j.assignedTo&&!j.clientAccount&&owner==='Admin')}
 function availableCalendarInvolvedUsers(){
   return all().filter(u=>u.role!=='Client'&&u.u!==calendarOwner()).sort((a,b)=>`${a.office||''} ${a.dept||a.role||''} ${a.u}`.localeCompare(`${b.office||''} ${b.dept||b.role||''} ${b.u}`));
@@ -1108,7 +1251,7 @@ function markGroupChatRead(groupId){
   const readMap=getUserGroupReadMap();
   readMap[groupId]=thread.length;
   groupChatReadState[me.u]=readMap;
-  localStorage.clGroupChatReadState=JSON.stringify(groupChatReadState);
+  save();
   updateNotificationBadge();
 }
 function groupChatUnreadMessages(group){
@@ -1195,7 +1338,7 @@ function markDirectThreadRead(otherUser){
   const readMap=getUserDirectReadMap();
   readMap[threadId]=messages.length;
   directChatReadState[me.u]=readMap;
-  localStorage.clDirectChatReadState=JSON.stringify(directChatReadState);
+  save();
   updateNotificationBadge();
 }
 function dueSoonVisibleTasks(){
@@ -1227,9 +1370,8 @@ function activeDueSoonNotificationTasks(){
 function clearDueSoonNotifications(keys=[]){
   if(!keys.length)return;
   clearedDueSoonNotifications=[...new Set([...clearedDueSoonNotifications,...keys])];
-  localStorage.clClearedDueSoonNotifications=JSON.stringify(clearedDueSoonNotifications);
+  save();
   updateNotificationBell();
-  notifyLiveUpdate();
 }
 function clearVisibleDueSoonNotifications(){
   clearDueSoonNotifications(activeDueSoonNotificationTasks().map(dueSoonNotificationKey));
@@ -1446,10 +1588,6 @@ function setDirectChatSearch(value){
   }
 }
 function openGlobalChat(){
-  directChats=JSON.parse(localStorage.clDirectChats||'{}');
-  directChatReadState=JSON.parse(localStorage.clDirectChatReadState||'{}');
-  groupChats=JSON.parse(localStorage.clGroupChats||'{}');
-  groupChatReadState=JSON.parse(localStorage.clGroupChatReadState||'{}');
   activeDirectChatUser=null;
   renderGlobalChat();
   $('#globalChatModal').classList.add('show');
@@ -2118,23 +2256,21 @@ function activeLogisticsMilestoneNotifications(){
 function clearLogisticsMilestoneNotification(id){
   if(!id)return;
   clearedLogisticsMilestoneNotifications=[...new Set([...clearedLogisticsMilestoneNotifications,id])];
-  localStorage.clClearedLogisticsMilestoneNotifications=JSON.stringify(clearedLogisticsMilestoneNotifications);
+  save();
   updateNotificationBell();
-  notifyLiveUpdate();
 }
 function clearAllNotifications(){
   const logisticsIds=activeLogisticsMilestoneNotifications().map(alert=>alert.id);
   if(logisticsIds.length){
     clearedLogisticsMilestoneNotifications=[...new Set([...clearedLogisticsMilestoneNotifications,...logisticsIds])];
-    localStorage.clClearedLogisticsMilestoneNotifications=JSON.stringify(clearedLogisticsMilestoneNotifications);
   }
   clearVisibleConfirmedManufacturingNotifications();
   clearVisibleAssignedManufacturingNotifications();
   clearVisiblePickupReadyNotifications();
   clearVisibleDueSoonNotifications();
+  save();
   updateNotificationBell();
   if($('#notificationsModal')?.classList.contains('show'))$('#notificationsBody').innerHTML=notificationsHTML();
-  notifyLiveUpdate();
 }
 function triggerLogisticsMilestoneNotifications(task,previousProgress){
   const currentProgress=cargoProgressPercent(task);
@@ -2238,9 +2374,8 @@ function activeAssignedManufacturingNotificationTasks(){
 function clearAssignedManufacturingNotifications(keys=[]){
   if(!keys.length)return;
   clearedAssignedManufacturingNotifications=[...new Set([...clearedAssignedManufacturingNotifications,...keys])];
-  localStorage.clClearedAssignedManufacturingNotifications=JSON.stringify(clearedAssignedManufacturingNotifications);
+  save();
   updateNotificationBell();
-  notifyLiveUpdate();
 }
 function clearVisibleAssignedManufacturingNotifications(){
   clearAssignedManufacturingNotifications(activeAssignedManufacturingNotificationTasks().map(assignedManufacturingNotificationKey));
@@ -2269,9 +2404,8 @@ function activePickupReadyNotificationTasks(){
 function clearPickupReadyNotifications(keys=[]){
   if(!keys.length)return;
   clearedPickupReadyNotifications=[...new Set([...clearedPickupReadyNotifications,...keys])];
-  localStorage.clClearedPickupReadyNotifications=JSON.stringify(clearedPickupReadyNotifications);
+  save();
   updateNotificationBell();
-  notifyLiveUpdate();
 }
 function clearVisiblePickupReadyNotifications(){
   clearPickupReadyNotifications(activePickupReadyNotificationTasks().map(pickupReadyNotificationKey));
@@ -2285,9 +2419,8 @@ function activeConfirmedManufacturingNotificationTasks(){
 function clearConfirmedManufacturingNotifications(keys=[]){
   if(!keys.length)return;
   clearedConfirmedManufacturingNotifications=[...new Set([...clearedConfirmedManufacturingNotifications,...keys])];
-  localStorage.clClearedConfirmedManufacturingNotifications=JSON.stringify(clearedConfirmedManufacturingNotifications);
+  save();
   updateNotificationBell();
-  notifyLiveUpdate();
 }
 function clearVisibleConfirmedManufacturingNotifications(){
   clearConfirmedManufacturingNotifications(activeConfirmedManufacturingNotificationTasks().map(confirmedManufacturingNotificationKey));
@@ -2775,6 +2908,16 @@ function openDashboard(targetPage='dash'){
   configureNav();
   updateNotificationBadge();
   renderAdmin(targetPage);
+}
+function refreshLiveUI(){
+  updateNotificationBadge();
+  if(me&&$('#systemPage')&&!$('#systemPage').classList.contains('hide')){
+    refreshRoleLabel();
+    renderAdmin(page||'dash');
+    return;
+  }
+  if($('#calendarModal')?.classList.contains('show'))$('#calendarModalBody').innerHTML=calendarHTML();
+  if($('#notificationsModal')?.classList.contains('show'))$('#notificationsBody').innerHTML=notificationsHTML();
 }
 function renderAdmin(p){
   page=normalizePage(p);
@@ -3596,11 +3739,28 @@ function deleteUserAccount(username){
 }
 
 async function bootApp(){
-  ensureData();
-  initLiveSync();
   setLang(localStorage.getItem(LANG_STORAGE_KEY)||'en');
   setMode('staff');
   bindBindClientForm();
+  if(supabaseEnabled()){
+    const loaded=await loadRemoteStateFromSupabase(true);
+    if(!loaded){
+      applyRemoteState(blankRemoteState());
+      remoteStateReady=true;
+      queueRemoteStateSave();
+    }
+    if(!hasMeaningfulState(serializeAppState())){
+      const legacyState=readLegacyLocalState();
+      if(hasMeaningfulState(legacyState)){
+        applyRemoteState(legacyState);
+        remoteStateReady=true;
+        queueRemoteStateSave();
+      }
+    }
+  }else{
+    ensureData();
+  }
+  initLiveSync();
   const restored=await restoreSupabaseSession();
   if(!restored)restoreSession();
 }
