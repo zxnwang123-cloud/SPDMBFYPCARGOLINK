@@ -2965,13 +2965,20 @@ function openDashboard(targetPage='dash'){
 }
 function refreshLiveUI(){
   updateNotificationBadge();
+  const globalChatOpen=$('#globalChatModal')?.classList.contains('show');
+  const notificationsOpen=$('#notificationsModal')?.classList.contains('show');
+  const calendarOpen=$('#calendarModal')?.classList.contains('show');
   if(me&&$('#systemPage')&&!$('#systemPage').classList.contains('hide')){
     refreshRoleLabel();
     renderAdmin(page||'dash');
+    if(globalChatOpen)renderGlobalChat();
+    if(calendarOpen)$('#calendarModalBody').innerHTML=calendarHTML();
+    if(notificationsOpen)$('#notificationsBody').innerHTML=notificationsHTML();
     return;
   }
-  if($('#calendarModal')?.classList.contains('show'))$('#calendarModalBody').innerHTML=calendarHTML();
-  if($('#notificationsModal')?.classList.contains('show'))$('#notificationsBody').innerHTML=notificationsHTML();
+  if(calendarOpen)$('#calendarModalBody').innerHTML=calendarHTML();
+  if(notificationsOpen)$('#notificationsBody').innerHTML=notificationsHTML();
+  if(globalChatOpen)renderGlobalChat();
 }
 function renderAdmin(p){
   page=normalizePage(p);
