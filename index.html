@@ -169,6 +169,97 @@ const liveSyncId=`LIVE-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
 let liveSyncChannel=null;
 let liveSyncIntervalId=null;
 let liveSyncSnapshot='';
+const SUPABASE_USERNAME_LOGIN_RPC='get_login_email_by_username';
+
+function supabaseEnabled(){
+  return !!supabaseClient;
+}
+function normalizeSupabaseProfile(row={}){
+  return {
+    id:row.id||'',
+    u:row.username||row.u||'',
+    p:'',
+    email:row.email||'',
+    office:row.office||'Global',
+    dept:row.dept||row.role||'Client',
+    role:row.role||row.dept||'Client',
+    position:row.position||null,
+    client:row.company_name||'',
+    company_name:row.company_name||'',
+    phone:row.phone||''
+  };
+}
+async function fetchProfilesFromSupabase(){
+  if(!supabaseEnabled())return [];
+  const {data,error}=await supabaseClient
+    .from('profiles')
+    .select('id,email,username,role,office,dept,position,company_name,phone,is_active')
+    .order('username',{ascending:true});
+  if(error){
+    console.error('Supabase profiles fetch failed',error);
+    return [];
+  }
+  users=(data||[])
+    .filter(profile=>profile?.username)
+    .map(normalizeSupabaseProfile)
+    .filter(profile=>profile.u!=='Admin');
+  localStorage.clUsers=JSON.stringify(users);
+  return users;
+}
+async function lookupLoginEmailByUsername(username){
+  if(!supabaseEnabled())return '';
+  const {data,error}=await supabaseClient.rpc(SUPABASE_USERNAME_LOGIN_RPC,{p_username:username});
+  if(error){
+    console.error('Supabase username lookup failed',error);
+    return '';
+  }
+  if(typeof data==='string')return data;
+  if(Array.isArray(data)&&data[0]){
+    if(typeof data[0]==='string')return data[0];
+    return data[0].email||data[0].login_email||'';
+  }
+  return data?.email||data?.login_email||'';
+}
+async function hydrateAuthenticatedUserFromSupabase(){
+  if(!supabaseEnabled())return null;
+  const {data:userData,error:userError}=await supabaseClient.auth.getUser();
+  if(userError||!userData?.user?.id)return null;
+  const {data:profile,error:profileError}=await supabaseClient
+    .from('profiles')
+    .select('id,email,username,role,office,dept,position,company_name,phone,is_active')
+    .eq('id',userData.user.id)
+    .single();
+  if(profileError||!profile){
+    console.error('Supabase profile hydrate failed',profileError);
+    return null;
+  }
+  const normalized=normalizeSupabaseProfile(profile);
+  me=normalized.u==='Admin'?admin:{...normalized,p:''};
+  persistSession(me);
+  return me;
+}
+async function loginWithSupabaseUsername(username,password){
+  if(!supabaseEnabled())return {error:new Error('Supabase client unavailable')};
+  const email=await lookupLoginEmailByUsername(username);
+  if(!email)return {error:new Error('Invalid username or password')};
+  const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
+  if(error)return {error};
+  await fetchProfilesFromSupabase();
+  await hydrateAuthenticatedUserFromSupabase();
+  return {data,error:null};
+}
+async function restoreSupabaseSession(){
+  if(!supabaseEnabled())return false;
+  const {data,error}=await supabaseClient.auth.getSession();
+  if(error||!data?.session)return false;
+  await fetchProfilesFromSupabase();
+  const user=await hydrateAuthenticatedUserFromSupabase();
+  return !!user;
+}
+async function signOutSupabaseSafe(){
+  if(!supabaseEnabled())return;
+  try{await supabaseClient.auth.signOut();}catch(error){console.error('Supabase sign out failed',error);}
+}
 
 function save(){
   localStorage.clUsers=JSON.stringify(users);
@@ -355,6 +446,7 @@ function enforceSessionValidity(){
   if(sessionState?.expiresAt&&Date.now()>=sessionState.expiresAt)logoutToLogin();
 }
 function logoutToLogin(){
+  signOutSupabaseSafe();
   me=null;
   activeDirectChatUser=null;
   directChatSearch='';
@@ -3403,10 +3495,20 @@ if(managerTaskFormEl)managerTaskFormEl.onsubmit=e=>{
   },300);
 };
 
-if(loginFormEl)loginFormEl.onsubmit=e=>{
+if(loginFormEl)loginFormEl.onsubmit=async e=>{
   e.preventDefault();
   const username=$('#user').value.trim();
   const password=$('#pass').value;
+  if(supabaseEnabled()){
+    const {error}=await loginWithSupabaseUsername(username,password);
+    if(error){
+      $('#err').style.display='block';
+      return;
+    }
+    $('#err').style.display='none';
+    openDashboard('dash');
+    return;
+  }
   const account=mode==='staff'
     ? all().find(user=>user.u===username&&user.p===password&&user.role!=='Client')
     : users.find(user=>user.u===username&&user.p===password&&user.role==='Client');
@@ -3472,12 +3574,17 @@ function deleteUserAccount(username){
   if(index>=0)askDelete(index);
 }
 
-ensureData();
-initLiveSync();
-setLang(localStorage.getItem(LANG_STORAGE_KEY)||'en');
-setMode('staff');
-bindBindClientForm();
-restoreSession();
+async function bootApp(){
+  ensureData();
+  initLiveSync();
+  setLang(localStorage.getItem(LANG_STORAGE_KEY)||'en');
+  setMode('staff');
+  bindBindClientForm();
+  const restored=await restoreSupabaseSession();
+  if(!restored)restoreSession();
+}
+
+bootApp();
 window.addEventListener('storage',event=>{
   const syncKeys=['clUsers','clReqs','clCalendarItems','clManufacturingTasks','clLogisticsTasks','clSalesProjectTasks','clLogisticsMilestoneNotifications','clClearedLogisticsMilestoneNotifications','clTaskWorkspaces','clDirectChats','clDirectChatReadState','clGroupChats','clGroupChatReadState','clClearedDueSoonNotifications','clClearedConfirmedManufacturingNotifications','clClearedAssignedManufacturingNotifications','clClearedPickupReadyNotifications','cargoJobs','clJobs'];
   if(event.key===null||syncKeys.includes(event.key))handleLiveSync();
