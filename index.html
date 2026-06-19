@@ -571,12 +571,12 @@ function restoreSession(){
   sessionViewState=JSON.parse(sessionStorage.getItem('clSessionView')||'null');
   if(!sessionState?.username||!sessionState?.expiresAt||Date.now()>=sessionState.expiresAt){
     clearSession();
-    return;
+    return false;
   }
   const restoredUser=all().find(x=>x.u===sessionState.username);
   if(!restoredUser){
     clearSession();
-    return;
+    return false;
   }
   me=restoredUser;
   page=sessionViewState?.page||'dash';
@@ -585,6 +585,7 @@ function restoreSession(){
   salesEditId=sessionViewState?.salesEditId||null;
   scheduleSessionTimeout();
   openDashboard(page);
+  return true;
 }
 function enforceSessionValidity(){
   if(sessionState?.expiresAt&&Date.now()>=sessionState.expiresAt)logoutToLogin();
@@ -1432,6 +1433,7 @@ function updateNotificationBadge(){
 function bindEnterToSend(textarea,form){
   if(!textarea||!form)return;
   textarea.onkeydown=e=>{
+    if(e.isComposing)return;
     if(e.key==='Enter'&&!e.shiftKey){
       e.preventDefault();
       if(typeof form.requestSubmit==='function')form.requestSubmit();
@@ -1568,7 +1570,8 @@ function renderGlobalChat(){
   if(form){
     form.onsubmit=e=>{
       e.preventDefault();
-      const text=$('#globalChatInput').value.trim();
+      const input=$('#globalChatInput');
+      const text=input?.value.trim()||'';
       if(!text || !selectedEntry) return;
       const message={id:`DM-${Date.now()}`,sender:me.u,text,time:nowStamp()};
       if(selectedEntry.type==='group') getGroupChatThread(selectedEntry.group.id).push(message);
@@ -1577,6 +1580,8 @@ function renderGlobalChat(){
       renderGlobalChat();
     };
     bindEnterToSend($('#globalChatInput'),form);
+    const input=$('#globalChatInput');
+    if(input){setTimeout(()=>input.focus(),0);}
   }
 }
 function setDirectChatSearch(value){
@@ -3168,6 +3173,8 @@ function bindTaskWorkspaceForms(){
       renderAdmin('taskRoom');
     };
     bindEnterToSend($('#taskMessageInput'),messageForm);
+    const input=$('#taskMessageInput');
+    if(input){setTimeout(()=>input.focus(),0);}
   }
   if(folderBtn)folderBtn.onclick=()=>{
     const name=$('#workspaceFolderName').value.trim();
@@ -3701,6 +3708,18 @@ if(loginFormEl)loginFormEl.onsubmit=async e=>{
   persistSession(localAccount);
   openDashboard('dash');
 };
+['#user','#pass'].forEach(sel=>{
+  const input=$(sel);
+  if(!input||!loginFormEl)return;
+  input.addEventListener('keydown',e=>{
+    if(e.isComposing)return;
+    if(e.key==='Enter'){
+      e.preventDefault();
+      if(typeof loginFormEl.requestSubmit==='function')loginFormEl.requestSubmit();
+      else loginFormEl.dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));
+    }
+  });
+});
 
 function seedUsers(){
   const adminOnlyKey='clAdminOnlyModeV1';
@@ -3758,6 +3777,10 @@ function deleteUserAccount(username){
 }
 
 async function bootApp(){
+  if(sessionState?.username&&sessionState?.expiresAt&&Date.now()<sessionState.expiresAt){
+    $('#loginPage').classList.add('hide');
+    $('#systemPage').classList.remove('hide');
+  }
   setLang(localStorage.getItem(LANG_STORAGE_KEY)||'en');
   setMode('staff');
   bindBindClientForm();
@@ -3780,6 +3803,8 @@ async function bootApp(){
     ensureData();
   }
   initLiveSync();
+  const locallyRestored=restoreSession();
+  if(locallyRestored)return;
   const restored=await restoreSupabaseSession();
   if(!restored)restoreSession();
 }
