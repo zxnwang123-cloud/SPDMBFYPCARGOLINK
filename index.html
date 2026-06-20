@@ -2982,11 +2982,14 @@ function refreshLiveUI(){
   if(notificationsOpen)$('#notificationsBody').innerHTML=notificationsHTML();
   if(globalChatOpen)renderGlobalChat();
 }
-function renderAdmin(p){
-  page=normalizePage(p);
+function renderAdmin(p,options={}){
+  const nextPage=normalizePage(p);
+  const previousPage=page;
+  const preserveScroll=options.preserveScroll ?? (nextPage===previousPage);
   const contentEl=$('#content');
-  if(contentEl)contentEl.scrollTop=0;
-  window.scrollTo({top:0,left:0,behavior:'auto'});
+  const previousContentScroll=contentEl?contentEl.scrollTop:0;
+  const previousWindowScroll=window.pageYOffset||document.documentElement.scrollTop||document.body.scrollTop||0;
+  page=nextPage;
   setActive(page);
   $('#adminTitle').textContent=tr(currentTitleKey());
   $('#adminSub').textContent=tr(currentSubKey());
@@ -3048,6 +3051,13 @@ function renderAdmin(p){
   if(page==='bindClient')syncBindClientPageSearchUI();
   if(page==='manageAssign')syncManageAssignmentsSearchUI();
   persistViewState();
+  if(preserveScroll){
+    if(contentEl)contentEl.scrollTop=previousContentScroll;
+    window.scrollTo({top:previousWindowScroll,left:0,behavior:'auto'});
+  }else{
+    if(contentEl)contentEl.scrollTop=0;
+    window.scrollTo({top:0,left:0,behavior:'auto'});
+  }
 }
 
 function renderAccountList(){
@@ -3235,7 +3245,7 @@ function bindTaskWorkspaceForms(){
     };
     bindEnterToSend($('#taskMessageInput'),messageForm);
     const input=$('#taskMessageInput');
-    if(input){setTimeout(()=>input.focus(),0);}
+    if(input&&false){setTimeout(()=>input.focus(),0);}
   }
   if(folderBtn)folderBtn.onclick=()=>{
     const name=$('#workspaceFolderName').value.trim();
