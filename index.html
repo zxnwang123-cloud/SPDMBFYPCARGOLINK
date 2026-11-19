@@ -13088,6 +13088,20 @@ openCargoUpdatesModal=function(){
 })();
 </script>
 
+<script id="cargoLinkReportBrandLogoPreload">
+/* Reuse the same original CargoLink logo that appears on the login page and sidebar. */
+(function(){
+  try{
+    const value=getComputedStyle(document.documentElement).getPropertyValue('--cargo-link-brand-icon');
+    const match=String(value).match(/data:image\/png;base64,[A-Za-z0-9+/=]+/);
+    if(!match)return;
+    const img=new Image();
+    window.cargoLinkReportLogo=img;
+    img.src=match[0];
+    window.cargoLinkReportLogoReady=img.decode?img.decode().catch(()=>{}):Promise.resolve();
+  }catch(error){console.warn('CargoLink PDF logo could not preload',error);}
+})();
+</script>
 <script id="cargoLinkSimpleReportV3">
 (()=>{
   if(window.__cargoLinkSimpleReportV3)return;
@@ -13101,7 +13115,8 @@ openCargoUpdatesModal=function(){
     const REPORT_RENDER_SCALE=2.5;
     const pages=[];let canvas,ctx,y;
     const font='"Segoe UI","Microsoft YaHei","PingFang SC",Arial,sans-serif';
-    const C={ink:'#172033',muted:'#68778a',line:'#dce4ec',soft:'#f5f8fb',navy:'#17324d',blue:'#2563eb',sky:'#eaf3ff',green:'#11875d',greenBg:'#e8f7f0',amber:'#a86400',amberBg:'#fff5df',red:'#b42318',redBg:'#feeceb',white:'#fff'};
+    /* Shared Midnight Glass palette, carried into the generated PDF. */
+    const C={ink:'#f3efff',muted:'#b6accf',line:'#3d3558',soft:'#251e3d',navy:'#16122b',blue:'#b49aff',sky:'#31264f',green:'#9be6cd',greenBg:'#173d39',amber:'#ffd494',amberBg:'#463723',red:'#ffb6c8',redBg:'#49253a',white:'#ffffff',page:'#100d20',pageAlt:'#16112c',panel:'#211a37',lavender:'#a989ff'};
     const zh=typeof L!=='undefined'&&L==='zh';
     const lab=(en,cn)=>zh?cn:en;
     const zhSystemValues={
@@ -13177,12 +13192,36 @@ openCargoUpdatesModal=function(){
     const generated=new Date().toLocaleString(zh?'zh-CN':'en-SG',{hour12:false});
 
     function header(){
-      ctx.fillStyle=C.white;ctx.fillRect(0,0,PAGE_W,PAGE_H);
-      ctx.fillStyle=C.navy;ctx.fillRect(0,0,PAGE_W,10);
-      ctx.fillStyle=C.navy;rounded(M,30,44,44,12);ctx.fill();ctx.fillStyle=C.white;ctx.font=`900 16px ${font}`;ctx.textAlign='center';ctx.fillText('CL',M+22,59);ctx.textAlign='left';
-      ctx.fillStyle=C.ink;ctx.font=`900 22px ${font}`;ctx.fillText('CargoLink',M+58,49);ctx.fillStyle=C.muted;ctx.font=`550 11.5px ${font}`;ctx.fillText(lab('Project Status Report','项目状态报告'),M+58,68);
-      ctx.textAlign='right';ctx.fillStyle=C.ink;ctx.font=`800 13px ${font}`;ctx.fillText(val(task.projectId),PAGE_W-M,48);ctx.fillStyle=C.muted;ctx.font=`550 10.5px ${font}`;ctx.fillText(generated,PAGE_W-M,67);ctx.textAlign='left';
-      ctx.strokeStyle=C.line;ctx.beginPath();ctx.moveTo(M,93);ctx.lineTo(PAGE_W-M,93);ctx.stroke();y=118;
+      // A true Midnight Glass page background with a subtle violet glow.
+      const pageBg=ctx.createLinearGradient(0,0,PAGE_W,PAGE_H);
+      pageBg.addColorStop(0,C.page);pageBg.addColorStop(.55,C.pageAlt);pageBg.addColorStop(1,C.page);
+      ctx.fillStyle=pageBg;ctx.fillRect(0,0,PAGE_W,PAGE_H);
+      const glow=ctx.createRadialGradient(PAGE_W-120,90,4,PAGE_W-120,90,650);
+      glow.addColorStop(0,'rgba(111,73,202,.19)');glow.addColorStop(1,'rgba(111,73,202,0)');
+      ctx.fillStyle=glow;ctx.fillRect(0,0,PAGE_W,650);
+      const topBar=ctx.createLinearGradient(0,0,PAGE_W,0);
+      topBar.addColorStop(0,'#1f1938');topBar.addColorStop(.64,'#171229');topBar.addColorStop(1,'#2e2053');
+      ctx.fillStyle=topBar;ctx.fillRect(0,0,PAGE_W,101);
+      const accent=ctx.createLinearGradient(0,0,PAGE_W,0);
+      accent.addColorStop(0,'#7d59ee');accent.addColorStop(.58,'#b49aff');accent.addColorStop(1,'#6045ae');
+      ctx.fillStyle=accent;ctx.fillRect(0,101,PAGE_W,3);
+      // Use CargoLink's actual logo asset, preloaded from the application's CSS.
+      ctx.fillStyle='#e7eeff';rounded(M,22,56,56,15);ctx.fill();
+      const brandLogo=window.cargoLinkReportLogo;
+      if(brandLogo&&brandLogo.complete&&brandLogo.naturalWidth>0){
+        ctx.drawImage(brandLogo,M+6,28,44,44);
+      }else{
+        ctx.fillStyle='#1265cb';ctx.font=`900 18px ${font}`;
+        ctx.textAlign='center';ctx.fillText('CL',M+28,56);ctx.textAlign='left';
+      }
+      ctx.fillStyle=C.white;ctx.font=`900 25px ${font}`;ctx.fillText('CargoLink',M+72,46);
+      ctx.fillStyle='#c6b4ff';ctx.font=`650 11.5px ${font}`;
+      ctx.fillText('One Platform. Connected Operations.',M+73,67);
+      ctx.textAlign='right';ctx.fillStyle=C.white;ctx.font=`800 14px ${font}`;
+      ctx.fillText(val(task.projectId),PAGE_W-M,44);
+      ctx.fillStyle='#c0b6d8';ctx.font=`550 11.5px ${font}`;
+      ctx.fillText(lab('PROJECT STATUS REPORT','项目状态报告')+'  ·  '+generated,PAGE_W-M,67);
+      ctx.textAlign='left';y=130;
     }
     function start(){
       canvas=document.createElement('canvas');
@@ -13195,7 +13234,11 @@ openCargoUpdatesModal=function(){
     }
     function ensure(h){if(!canvas)start();if(y+h>FOOT-18)start();}
     function section(title,sub=''){
-      ensure(sub?74:54);ctx.fillStyle=C.ink;ctx.font=`900 22px ${font}`;ctx.fillText(title,M,y+25);if(sub){ctx.fillStyle=C.muted;ctx.font=`500 12.5px ${font}`;const ls=wrap(sub,W-20,`500 12.5px ${font}`).slice(0,2);ls.forEach((ln,i)=>ctx.fillText(ln,M,y+47+i*17));}y+=sub?64:44;ctx.strokeStyle=C.line;ctx.beginPath();ctx.moveTo(M,y);ctx.lineTo(PAGE_W-M,y);ctx.stroke();y+=14;
+      ensure(sub?84:66);
+      ctx.fillStyle=C.lavender;rounded(M,y+7,6,30,3);ctx.fill();
+      ctx.fillStyle=C.ink;ctx.font=`900 22px ${font}`;ctx.fillText(title,M+22,y+29);
+      if(sub){ctx.fillStyle=C.muted;ctx.font=`500 12.5px ${font}`;const ls=wrap(sub,W-38,`500 12.5px ${font}`).slice(0,2);ls.forEach((ln,i)=>ctx.fillText(ln,M+22,y+51+i*17));}
+      y+=sub?70:49;ctx.strokeStyle=C.line;ctx.beginPath();ctx.moveTo(M,y);ctx.lineTo(PAGE_W-M,y);ctx.stroke();y+=14;
     }
     function statusColors(text){const s=String(text||'').toLowerCase();if(/deliver|complete|received|done/.test(s))return [C.green,C.greenBg];if(/overdue|cancel|failed/.test(s))return [C.red,C.redBg];if(/waiting|pending|procurement|custom|pickup/.test(s))return [C.amber,C.amberBg];return [C.blue,C.sky];}
     function callout(title,text,tone='blue'){
@@ -13205,7 +13248,7 @@ openCargoUpdatesModal=function(){
       const gap=12,cw=(W-gap*(cols-1))/cols;
       for(let i=0;i<fields.length;i+=cols){const row=fields.slice(i,i+cols);const layouts=row.map(f=>wrap(val(f.value),cw-28,`750 16px ${font}`).slice(0,3));const h=Math.max(76,...layouts.map(l=>48+l.length*22));ensure(h+12);row.forEach((f,j)=>{const x=M+j*(cw+gap);ctx.fillStyle=C.soft;ctx.strokeStyle=C.line;ctx.lineWidth=1;rounded(x,y,cw,h,12);ctx.fill();ctx.stroke();ctx.fillStyle=C.muted;ctx.font=`750 12px ${font}`;ctx.fillText(String(f.label).toUpperCase(),x+14,y+20);ctx.fillStyle=C.ink;ctx.font=`750 16px ${font}`;layouts[j].forEach((ln,k)=>ctx.fillText(ln,x+14,y+48+k*22));});y+=h+12;}
     }
-    function progressBar(){ensure(56);ctx.fillStyle=C.soft;rounded(M,y,W,44,14);ctx.fill();ctx.fillStyle=C.muted;ctx.font=`700 11px ${font}`;ctx.fillText(lab('OVERALL PROGRESS','整体进度'),M+16,y+18);ctx.fillStyle='#dde6ef';rounded(M+160,y+14,W-235,12,6);ctx.fill();ctx.fillStyle=progress>=100?C.green:C.blue;rounded(M+160,y+14,(W-235)*(progress/100),12,6);ctx.fill();ctx.fillStyle=C.ink;ctx.font=`900 15px ${font}`;ctx.textAlign='right';ctx.fillText(`${progress}%`,PAGE_W-M-16,y+25);ctx.textAlign='left';y+=58;}
+    function progressBar(){ensure(56);ctx.fillStyle=C.soft;rounded(M,y,W,44,14);ctx.fill();ctx.fillStyle=C.muted;ctx.font=`700 11px ${font}`;ctx.fillText(lab('OVERALL PROGRESS','整体进度'),M+16,y+18);ctx.fillStyle='#3c315c';rounded(M+160,y+14,W-235,12,6);ctx.fill();ctx.fillStyle=progress>=100?C.green:C.blue;rounded(M+160,y+14,(W-235)*(progress/100),12,6);ctx.fill();ctx.fillStyle=C.ink;ctx.font=`900 15px ${font}`;ctx.textAlign='right';ctx.fillText(`${progress}%`,PAGE_W-M-16,y+25);ctx.textAlign='left';y+=58;}
     function workflow(){
       const stages=procurementUsed
         ?[['Inquiry','询价'],['Procurement','采购'],['Manufacturing','生产'],['QA/QC','质量检验'],['Vessel and Container Booking','订舱'],['Ready for Pickup','待提货'],['In Transit','运输中'],['Customs Clearance','清关'],['Delivered','已交付']]
@@ -13253,7 +13296,7 @@ openCargoUpdatesModal=function(){
           const take=Math.min(remaining,available);
           const chunk=columns.map(lines=>lines.splice(0,take));
           const h=Math.max(38,20+take*20);
-          ctx.fillStyle=ri%2===0?C.white:C.soft;ctx.fillRect(M,y,W,h);
+          ctx.fillStyle=ri%2===0?C.panel:C.soft;ctx.fillRect(M,y,W,h);
           ctx.strokeStyle=C.line;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(M,y+h);ctx.lineTo(PAGE_W-M,y+h);ctx.stroke();
           ctx.fillStyle=C.ink;ctx.font=textFont;
           chunk.forEach((lines,i)=>lines.forEach((line,j)=>ctx.fillText(line,colX[i]+10,y+22+j*20)));
@@ -13269,7 +13312,10 @@ openCargoUpdatesModal=function(){
     }
 
     start();
-    ctx.fillStyle=C.navy;rounded(M,y,W,192,22);ctx.fill();ctx.fillStyle='#c8d8e8';ctx.font=`800 11px ${font}`;ctx.fillText(lab('PROJECT OVERVIEW','项目概览'),M+26,y+30);ctx.fillStyle=C.white;ctx.font=`900 32px ${font}`;wrap(val(task.title),W-340,`900 32px ${font}`).slice(0,2).forEach((ln,i)=>ctx.fillText(ln,M+26,y+70+i*38));ctx.fillStyle='#d8e5f0';ctx.font=`650 13px ${font}`;ctx.fillText(`${lab('Project ID','项目编号')}: ${val(task.projectId)}`,M+26,y+154);const [sfg,sbg]=statusColors(stageLabel());ctx.fillStyle=sbg;rounded(PAGE_W-M-292,y+28,250,48,16);ctx.fill();ctx.fillStyle=sfg;ctx.font=`850 14px ${font}`;ctx.textAlign='center';ctx.fillText(stageLabel(),PAGE_W-M-167,y+58);ctx.textAlign='left';ctx.fillStyle='#d8e5f0';ctx.font=`700 11px ${font}`;ctx.fillText(lab('CURRENT STAGE','当前阶段'),PAGE_W-M-292,y+99);ctx.fillStyle=C.white;ctx.font=`900 28px ${font}`;ctx.fillText(`${progress}%`,PAGE_W-M-292,y+137);ctx.fillStyle='rgba(255,255,255,.18)';rounded(PAGE_W-M-292,y+151,250,10,5);ctx.fill();ctx.fillStyle='#7dd3fc';rounded(PAGE_W-M-292,y+151,250*(progress/100),10,5);ctx.fill();y+=216;
+    const heroBg=ctx.createLinearGradient(M,y,PAGE_W-M,y+192);heroBg.addColorStop(0,'#322154');heroBg.addColorStop(.52,'#241b41');heroBg.addColorStop(1,'#4b3384');
+    ctx.fillStyle=heroBg;rounded(M,y,W,192,22);ctx.fill();
+    ctx.strokeStyle='rgba(190,170,255,.38)';ctx.lineWidth=1.6;ctx.stroke();
+    ctx.fillStyle='#cbb8ff';ctx.font=`800 11px ${font}`;ctx.fillText(lab('PROJECT OVERVIEW','项目概览'),M+26,y+30);ctx.fillStyle=C.white;ctx.font=`900 32px ${font}`;wrap(val(task.title),W-340,`900 32px ${font}`).slice(0,2).forEach((ln,i)=>ctx.fillText(ln,M+26,y+70+i*38));ctx.fillStyle='#d8e5f0';ctx.font=`650 13px ${font}`;ctx.fillText(`${lab('Project ID','项目编号')}: ${val(task.projectId)}`,M+26,y+154);const [sfg,sbg]=statusColors(stageLabel());ctx.fillStyle=sbg;rounded(PAGE_W-M-292,y+28,250,48,16);ctx.fill();ctx.fillStyle=sfg;ctx.font=`850 14px ${font}`;ctx.textAlign='center';ctx.fillText(stageLabel(),PAGE_W-M-167,y+58);ctx.textAlign='left';ctx.fillStyle='#d8e5f0';ctx.font=`700 11px ${font}`;ctx.fillText(lab('CURRENT STAGE','当前阶段'),PAGE_W-M-292,y+99);ctx.fillStyle=C.white;ctx.font=`900 28px ${font}`;ctx.fillText(`${progress}%`,PAGE_W-M-292,y+137);ctx.fillStyle='rgba(255,255,255,.18)';rounded(PAGE_W-M-292,y+151,250,10,5);ctx.fill();ctx.fillStyle='#bba4ff';rounded(PAGE_W-M-292,y+151,250*(progress/100),10,5);ctx.fill();y+=216;
     section(lab('At a Glance','一览信息'),lab('The key information needed to understand the project immediately.','快速了解项目所需的关键信息。'));
     cards([{label:lab('Client','客户'),value:data.clientCompany||data.clientName},{label:lab('Office','办公室'),value:typeof displayOfficeList==='function'?displayOfficeList(task.assignedOffice||task.targetOffices||'-'):(task.assignedOffice||'-')},{label:lab('Deadline','截止日期'),value:task.deadline},{label:'ETD',value:logistics.proformaEtd||data.etd},{label:'ETA',value:finalDelivery.eta||data.eta},{label:lab('Destination','目的地'),value:[finalDelivery.destinationCountry||data.destinationCountry||task.destinationCountry,finalDelivery.destinationPort||data.destinationPort].filter(Boolean).join(' · ')||'-'}]);
     progressBar();section(lab('Workflow','流程'));workflow();
@@ -13481,7 +13527,7 @@ openCargoUpdatesModal=function(){
     const includeChat=(typeof includeReportChatHistory!=='undefined'&&includeReportChatHistory)||!!document.querySelector('#reportIncludeChatLog')?.checked;
     if(includeChat){start();section(lab('Appendix · Project Chat History','附录 · 项目聊天记录'),lab('Current message text is shown. Edited and pinned messages are clearly labelled.','显示消息的当前内容；已编辑及已置顶消息会清楚标注。'));table([lab('Date / Time','日期 / 时间'),lab('Sender','发送人'),lab('Message','消息内容'),lab('Status','状态')],arr(workspace.messages).map(m=>{const s=[];if(m.editedAt||m.editedTime)s.push(lab('Edited','已编辑'));if(m.pinned)s.push(lab('Pinned','已置顶'));return [m.time||'-',m.sender||'-',m.text||'-',s.join(' · ')||lab('Original','原始消息')];}),[.19,.17,.49,.15]);}
 
-    pages.forEach((p,index)=>{const c=p.ctx;c.strokeStyle=C.line;c.beginPath();c.moveTo(M,1691);c.lineTo(PAGE_W-M,1691);c.stroke();c.fillStyle=C.muted;c.font=`550 11px ${font}`;c.textAlign='left';c.fillText(`CargoLink · ${val(task.projectId)}`,M,1718);c.textAlign='center';c.fillText(lab('Project Status Report','项目状态报告'),PAGE_W/2,1718);c.textAlign='right';c.fillText(lab(`Page ${index+1} of ${pages.length}`,`第 ${index+1} 页，共 ${pages.length} 页`),PAGE_W-M,1718);c.textAlign='left';});
+    pages.forEach((p,index)=>{const c=p.ctx;c.strokeStyle=C.line;c.beginPath();c.moveTo(M,1691);c.lineTo(PAGE_W-M,1691);c.stroke();c.fillStyle=C.muted;c.font=`550 11px ${font}`;c.textAlign='left';c.fillText(`CargoLink · ${val(task.projectId)}`,M,1718);c.textAlign='center';c.fillText(lab('One Platform. Connected Operations.','一个平台，连接运营'),PAGE_W/2,1718);c.textAlign='right';c.fillText(lab(`Page ${index+1} of ${pages.length}`,`第 ${index+1} 页，共 ${pages.length} 页`),PAGE_W-M,1718);c.textAlign='left';});
     return pages;
   }
 
