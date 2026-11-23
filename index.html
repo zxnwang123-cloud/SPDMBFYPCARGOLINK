@@ -15914,7 +15914,7 @@ openCargoUpdatesModal=function(){
   }
   window.qaUploadEvidence=async function(taskId){
     const task=(salesProjectTasks||[]).find(entry=>entry.id===taskId);if(!task||!(isQualityUser()||isAdminUser()))return;
-    const photos=[...($('#qaPhotoFiles')?.files||[])],reports=[...($('#qaReportFiles')?.files||[])];if(!photos.length&&!reports.length){showRequirementToast(`${tr('qaQcNeedPhoto')} / ${tr('qaQcNeedReport')}`);return;}
+    const photos=[...($('#qaPhotoFiles')?.files||[])],reports=[...($('#qaReportFiles')?.files||[])];if(!photos.length&&!reports.length){if(window.CL_VIDEO_DEMO_NO_DOCUMENTS){window.qaSkipEvidence?.();return;}showRequirementToast(`${tr('qaQcNeedPhoto')} / ${tr('qaQcNeedReport')}`);return;}
     if(typeof armFilePickerSyncPause==='function')armFilePickerSyncPause(30000);
     try{const photoRecords=await qaReadAndStoreFiles(task,photos,'qaQcPhoto','QA/QC Inspection File');const reportRecords=await qaReadAndStoreFiles(task,reports,'qaQcReport','QA/QC Inspection Report');const current=currentQaQcUpdate(task);qaSetUpdate(task,{photoFileIds:[...(current.photoFileIds||[]),...photoRecords.map(r=>r.id)],photoNames:[...(current.photoNames||[]),...photoRecords.map(r=>r.name)],reportFileIds:[...(current.reportFileIds||[]),...reportRecords.map(r=>r.id)],reportNames:[...(current.reportNames||[]),...reportRecords.map(r=>r.name)],evidenceUpdatedAt:nowStamp(),evidenceUpdatedBy:me?.u||''});const counts=qaEvidenceCounts(task);qaAddUpdate(task,{type:'qaQcEvidence',stage:'QA/QC',photoCount:counts.photos,reportCount:counts.reports,inspectionDate:current.inspectionDate});save();showSuccessToast(tr('qaQcEvidenceSaved'));renderAdmin('taskRoom',{preserveScroll:true,animate:false});}finally{if(typeof releaseFilePickerSyncPause==='function')releaseFilePickerSyncPause(1200);}
   };
@@ -18597,12 +18597,13 @@ html.salesDirectTasksMode #salesDirectTasksBtn{display:inline-flex!important}
         <button class="btn full" type="submit">${u.inspectionDate?tr('qaSaveInspectionChanges'):tr('qaQcScheduleInspection')}</button>
         ${u.inspectionDate?`<button type="button" class="btn alt full qaScheduleCancelButton" onclick="qaQcToggleInspectionEdit(false)">${tr('qaCancelScheduleEdit')}</button>`:''}
       </form></div>`+
-      (u.inspectionDate?`<div class="workUpdateCard qaEvidenceCard"><h4>${tr('qaQcRoundEvidence')}</h4><p>${tr('qaQcEvidenceSub')}</p>
+      (u.inspectionDate?`<div class="workUpdateCard qaEvidenceCard"><h4>${tr('qaQcRoundEvidence')}</h4><p>${tr('qaQcEvidenceSub')} ${window.CL_VIDEO_DEMO_NO_DOCUMENTS?(L==='zh'?'可直接跳过上传并选择“通过”或“不合格”。':'You can skip uploads and choose Passed or Rejected below.'):''}</p>
       ${counts.photos>0&&counts.reports>0?`<div class="qaEvidenceUploaded"><span class="qaEvidenceUploadedMessage">✓ ${tr('qaEvidenceComplete')}</span><button type="button" class="btn mini qaEvidenceMoreBtn" onclick="qaEvidenceToggleForm(this)" aria-expanded="false">${tr('qaAddMoreFiles')}</button></div>`:''}
       <form id="qaEvidenceForm" class="workUpdateForm qaEvidenceUploadForm${counts.photos>0&&counts.reports>0?' hide':''}">
         ${evidencePicker('qaPhotoFiles',tr('qaQcPhotos'))}
         ${evidencePicker('qaReportFiles',tr('qaQcReports'))}
         <button class="btn full" type="submit">${tr('qaQcUploadEvidence')}</button>
+        ${window.CL_VIDEO_DEMO_NO_DOCUMENTS?`<button class="btn alt full qaSkipEvidenceBtn" type="button" onclick="qaSkipEvidence()">${L==='zh'?'跳过上传，继续记录检验结果':'Skip uploads and continue to inspection result'}</button>`:''}
       </form>${evidenceHTML(t)}</div><div class="workUpdateCard"><h4>${tr('qaQcInspectionResult')}</h4><div class="group full qaRejectionRemarkGroup"><label for="qaRejectReason">${tr('qaQcFailureReason')} <span class="qaRejectRequired">*</span></label><textarea id="qaRejectReason" rows="3" aria-describedby="qaRejectReasonHelp" oninput="this.removeAttribute('aria-invalid');this.classList.remove('qaRejectInvalid');document.getElementById('qaRejectReasonError')?.classList.add('hide')" placeholder="${escapeHtml(tr('qaQcFailureReasonHelp'))}"></textarea><small class="qaRejectHint" id="qaRejectReasonHelp">${tr('qaQcFailureRemarkNotice')}</small><p class="qaRejectError hide" id="qaRejectReasonError" role="alert">${tr('qaQcFailureReasonRequired')}</p></div><div class="qaDecisionButtons"><button type="button" class="btn qaPassBtn" onclick="qaQcRecordDecision('${escapeHtml(t.id)}','Passed')">${tr('qaQcPassedButton')}</button><button type="button" class="btn qaRejectBtn" onclick="qaQcRecordDecision('${escapeHtml(t.id)}','Rejected')">${tr('qaQcRejectedButton')}</button></div></div>`:'')+historyHTML(t)+'</div>';
   }
   window.qaQcToggleInspectionEdit=function(open){
@@ -18634,6 +18635,16 @@ html.salesDirectTasksMode #salesDirectTasksBtn{display:inline-flex!important}
     return prevSummary.call(this,t);
   };
 
+  // Browser-storage testing: inspection evidence is optional. Skipping files only
+  // advances the interface to the actual Pass/Reject choice; it does not auto-pass.
+  window.qaSkipEvidence=function(){
+    if(!window.CL_VIDEO_DEMO_NO_DOCUMENTS)return;
+    const actions=document.querySelector('.qaDecisionButtons');
+    if(!actions)return;
+    const card=actions.closest('.workUpdateCard')||actions;
+    card.scrollIntoView({behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
+    actions.querySelector('button')?.focus({preventScroll:true});
+  };
   window.qaQcRecordDecision=function(taskId,result){
     const t=getTask(taskId);if(!t||taskCargoStatus(t)!=='QA/QC'||!(isQualityUser()||isAdminUser()))return;
     const u=qa(t),c=roundCount(t),n=currentRound(t);
@@ -18669,7 +18680,7 @@ html.salesDirectTasksMode #salesDirectTasksBtn{display:inline-flex!important}
   window.qaUploadEvidence=async function(taskId){
     const t=getTask(taskId);if(!t||taskCargoStatus(t)!=='QA/QC'||!(isQualityUser()||isAdminUser()))return;
     const pictures=[...($('#qaPhotoFiles')?.files||[])],reports=[...($('#qaReportFiles')?.files||[])];
-    if(!pictures.length&&!reports.length){showRequirementToast(`${tr('qaQcNeedPhoto')} / ${tr('qaQcNeedReport')}`);return;}
+    if(!pictures.length&&!reports.length){if(window.CL_VIDEO_DEMO_NO_DOCUMENTS){window.qaSkipEvidence?.();return;}showRequirementToast(`${tr('qaQcNeedPhoto')} / ${tr('qaQcNeedReport')}`);return;}
     if(typeof armFilePickerSyncPause==='function')armFilePickerSyncPause(30000);
     const ws=getTaskWorkspace(gkey(t)),added=[],n=currentRound(t);
     try{
@@ -20912,6 +20923,7 @@ html.salesUnifiedTaskCentreMode .salesTaskSelectBar{display:none!important}
         <div class="group full"><label for="qaPhotoFiles">${locale('Inspection Files','检验文件')} <span class="clOptionalFileBadge">${locale('Optional','选填')}</span></label><div class="qaEvidencePicker"><input id="qaPhotoFiles" type="file" multiple onchange="qaEvidenceFileSelection(this)"><span class="qaWorkerFileHint">${locale('Choose one or more files','选择一个或多个文件')}</span></div></div>
         <div class="group full"><label for="qaReportFiles">${locale('Inspection Reports','检验报告')} <span class="clOptionalFileBadge">${locale('Optional','选填')}</span></label><div class="qaEvidencePicker"><input id="qaReportFiles" type="file" multiple onchange="qaEvidenceFileSelection(this)"><span class="qaWorkerFileHint">${locale('Choose one or more files','选择一个或多个文件')}</span></div></div>
         <button type="submit" class="btn full">${locale('Upload Evidence','上传检验证据')}</button>
+        ${window.CL_VIDEO_DEMO_NO_DOCUMENTS?`<button type="button" class="btn alt full qaSkipEvidenceBtn" onclick="qaSkipEvidence()">${locale('Skip uploads and continue to inspection result','跳过上传，继续记录检验结果')}</button>`:''}
       </form>
     </div><div class="workUpdateCard qaWorkerRecoveredDecision" data-step30="qa-worker-decision">
       <h4>${locale('QA/QC Inspection Result','质检结果')}</h4>
@@ -20937,6 +20949,7 @@ html.salesUnifiedTaskCentreMode .salesTaskSelectBar{display:none!important}
     if(typeof page!=='undefined'&&page!=='taskRoom')return;
     const task=typeof currentTaskRoom==='function'?currentTaskRoom():null;
     if(!task||!isQaScheduledActive(task))return;
+    if(window.CL_VIDEO_DEMO_NO_DOCUMENTS){window.qaSkipEvidence?.();return;}
     const card=document.querySelector('.qaEvidenceCard');
     if(!card)return;
     const form=card.querySelector('#qaEvidenceForm');
