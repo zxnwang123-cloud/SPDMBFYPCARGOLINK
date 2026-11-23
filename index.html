@@ -22043,15 +22043,29 @@ function cl42MovementActionLabel(entry){
   function visibleManufacturingRequests(){
     if(typeof s7MaterialRequests==='undefined')return [];
     const office=typeof s7Office==='function'?s7Office(me?.office):String(me?.office||'');
+    // This is an ACTIVE REQUEST tracker, not the purchase history. Procurement
+    // receipts are kept in the underlying ledger and purchase history instead.
+    const activeStatuses=new Set(['Submitted','Sourcing','Ordered','InTransit','Arrived']);
+    // A saved receipt in the compact journal must also prevent an out-of-date
+    // browser-storage snapshot from briefly displaying a completed request.
+    const journalById=new Map(journal().filter(r=>r?.id).map(r=>[String(r.id),r]));
+    const complete=r=>!!r&&(
+      !activeStatuses.has(String(r.status||''))||
+      r.receivedByManufacturing===true||r.receivedByProcurement===true||
+      !!r.inventoryPostedAt
+    );
     return array(s7MaterialRequests).filter(request=>isRequest(request)&&
-      (typeof s7Office==='function'?s7Office(request.office)===office:String(request.office||'')===office))
+      (typeof s7Office==='function'?s7Office(request.office)===office:String(request.office||'')===office)&&
+      !complete(request)&&!complete(journalById.get(String(request.id))))
       .sort((a,b)=>String(b.requestedAt||b.submittedAt||'').localeCompare(String(a.requestedAt||a.submittedAt||'')));
   }
   function trackerHTML(){
     const requests=visibleManufacturingRequests();
+    // Hide the entire panel when Procurement has completed every request.
+    if(!requests.length)return '';
     return `<section id="clPurchaseRequestsTracker" class="clRequestTracker" aria-live="polite">
       <div class="clRequestTrackerHead"><div><h3>${lang('Manufacturing Purchase Requests','生产采购申请记录')}</h3>
-      <p>${lang('Submitted orders remain listed here while Procurement processes them.','已提交的采购申请将在这里保留，直到采购部完成处理。')}</p></div>
+      <p>${lang('Outstanding orders remain here until Procurement confirms goods receipt.','未完成的采购申请会显示在这里，直到采购部确认收货。')}</p></div>
       <span class="clRequestTrackerCount">${requests.length}</span></div>
       ${requests.length?`<div class="clRequestTrackerList">${requests.map(r=>{
         const state=String(r.status||'Submitted');
